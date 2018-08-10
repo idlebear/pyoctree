@@ -117,9 +117,14 @@ class Octree(object):
 
         """
         if np:
-            if np.any(position < self.root.lower):
+
+            #if np.any(position < self.root.lower):
+            if position[0] < self.root.lower[0] or position[1] < self.root.lower[1] or position[2] < self.root.lower[2]:
+                # print('underflow: ({} < {})'.format( position, self.root.lower ))
                 return None
-            if np.any(position > self.root.upper):
+            #if np.any(position > self.root.upper):
+            if position[0] > self.root.upper[0] or position[1] > self.root.upper[1] or position[2] > self.root.upper[2]:
+                # print('overflow: ({} < {})'.format( position, self.root.upper ))
                 return None
         else:
             if position < self.root.lower:
@@ -191,6 +196,13 @@ class Octree(object):
 
         # else, is this node a leaf node with objects already in it?
         elif root.isLeafNode:
+            # sanity check -- if this is a duplicate node, ignore it
+            for data in root.data:
+                existingPos = data['position']
+                if np.all( existingPos == position ):
+                    #dup
+                    return root
+
             # We've reached a leaf node. This has no branches yet, but does hold
             # some objects, at the moment, this has to be less objects than MAX_OBJECTS_PER_CUBE
             # otherwise this would not be a leafNode (elementary my dear watson).
@@ -300,7 +312,9 @@ class Octree(object):
 
     def buildClusteredTree( self, proximity ):
         '''
-        Traverse the tree and cluster the nodes/positions found in any leaves
+        Traverse the tree and cluster the nodes/positions found in any leaves.  Nodes which are otherwise 
+        neighbours, but happen to be in different leaves will not cluster.  They may cluster if the function
+        is run a second time, but no guarantees...
 
         One unfortunate side effect that is going to be ignored for the time being - any associated
         node data is dropped (which one should we keep?).  Not currently an issue since position is the 
@@ -336,7 +350,7 @@ class Octree(object):
                             break
 
                     if not added:
-                        clusters = np.vstack( (clusters, (*pos, 1)) )
+                        clusters = np.vstack( (clusters, (pos[0], pos[1], pos[2], 1)) )   # was (*pos, 1) but need python2.7 for ROS...
 
             for cluster in clusters:
                 if cluster[3] > 1:
