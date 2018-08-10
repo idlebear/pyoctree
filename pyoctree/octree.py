@@ -33,7 +33,7 @@ class OctNode(object):
     """
     New Octnode Class, can be appended to as well i think
     """
-    def __init__(self, position, size, depth, data):
+    def __init__(self, position, size, depth, data=None):
         """
         OctNode Cubes have a position and size
         position is related to, but not the same as the objects the node contains.
@@ -54,7 +54,10 @@ class OctNode(object):
         self.isLeafNode = True
 
         ## store our object, typically this will be one, but maybe more
-        self.data = data
+        if data is None:
+            self.data = []
+        else:
+            self.data = [ {'position': data[0], 'data': data[1] } ]
 
         ## might as well give it some emtpy branches while we are here.
         self.branches = [None, None, None, None, None, None, None, None]
@@ -85,7 +88,7 @@ class Octree(object):
         if we insert more objects into it than MAX_OBJECTS_PER_CUBE, then it will subdivide itself.
 
         """
-        self.root = OctNode(origin, worldSize, 0, [])
+        self.root = OctNode(origin, worldSize, 0, None)
         self.worldSize = worldSize
         self.limit_nodes = (max_type=="nodes")
         self.limit = max_value
@@ -104,10 +107,7 @@ class Octree(object):
         position : array_like with 3 elements
             The spatial location for the object
         objData : optional
-            The data to store at this position. By default stores the position.
-
-            If the object does not have a position attribute, the object
-            itself is assumed to be the position.
+            The data to store at this position. 
 
         Returns
         -------
@@ -126,9 +126,6 @@ class Octree(object):
                 return None
             if position > self.root.upper:
                 return None
-
-        if objData is None:
-            objData = position
 
         return self.__insertNode(self.root, self.root.size, self.root, position, objData)
 
@@ -172,7 +169,7 @@ class Octree(object):
             # we already know the size as supplied by the parent node
             # So create a new node at this position in the tree
             # print "Adding Node of size: " + str(size / 2) + " at " + str(newCenter)
-            return OctNode(newCenter, size, parent.depth + 1, [objData])
+            return OctNode(newCenter, size, parent.depth + 1, (position, objData))
 
         #else: are we not at our position, but not at a leaf node either
         elif (
@@ -204,14 +201,14 @@ class Octree(object):
                 (not self.limit_nodes and root.depth >= self.limit)
             ):
                 # No? then Add to the Node's list of objects and we're done
-                root.data.append(objData)
+                root.data.append( { 'position':position, 'data':objData } )
                 #return root
             else:
                 # Adding this object to this leaf takes us over the limit
                 # So we have to subdivide the leaf and redistribute the objects
                 # on the new children.
                 # Add the new object to pre-existing list
-                root.data.append(objData)
+                root.data.append( { 'position':position, 'data':objData } )
                 # copy the list
                 objList = root.data
                 # Clear this node's data
@@ -223,15 +220,20 @@ class Octree(object):
                 # distribute the objects on the new tree
                 # print "Subdividing Node sized at: " + str(root.size) + " at " + str(root.position)
                 for ob in objList:
-                    # Use the position attribute of the object if possible
-                    if hasattr(ob, "position"):
-                        pos = ob.position
-                    else:
-                        pos = ob
+                    pos = ob['position']
                     branch = self.__findBranch(root, pos)
-                    root.branches[branch] = self.__insertNode(root.branches[branch], newSize, root, pos, ob)
+                    root.branches[branch] = self.__insertNode(root.branches[branch], newSize, root, pos, ob['data'])
         return root
 
+    def clusteredInsertNode(self, position, proximity, objData=None):
+        '''
+        Insert a new entry into the tree -- if there is already a point in the tree near the intended point, 
+        combine it with this one, and add the new node to the tree.
+        '''
+        pass
+
+
+        
     def findPosition(self, position):
         """
         Basic lookup that finds the leaf node containing the specified position
@@ -290,10 +292,58 @@ class Octree(object):
         for branch in root.branches:
             if branch is None:
                 continue
-            for n in Octree.__iterateDepthFirst(branch):
-                yield n
-            if branch.isLeafNode:
+            elif branch.isLeafNode:
                 yield branch
+            else:
+                for n in Octree.__iterateDepthFirst(branch):
+                    yield n
+
+    def buildClusteredTree( self, proximity ):
+        '''
+        Traverse the tree and cluster the nodes/positions found in any leaves
+
+        One unfortunate side effect that is going to be ignored for the time being - any associated
+        node data is dropped (which one should we keep?).  Not currently an issue since position is the 
+        only important data right now
+
+        '''
+
+        if self.limit_nodes == True:
+            max_type = 'nodes'
+        else:
+            max_type = 'depth'
+        clusteredTree = Octree( self.worldSize, self.root.position, max_type, self.limit )
+
+        if not np:
+            raise ImportError( 'Numpy required to cluster tree data' )
+
+        for leaf in self.iterateDepthFirst():
+
+            clusters = np.empty( (0,4) )
+
+            if len(leaf.data) > 1:
+                # ignore any singletons...
+
+                for node in leaf.data:
+                    pos = node['position']
+                    added = False
+                    for cluster in clusters:
+                        # if np.linalg.norm( (pos[0]-cluster[0], pos[1]-cluster[1], pos[2]-cluster[2]) ) < proximity:
+                        if np.linalg.norm( pos-cluster[:3] ) < proximity:
+                            cluster[3] += 1
+                            cluster[:3] = pos/(cluster[3]) + cluster[:3] * (cluster[3]-1)/cluster[3]
+                            added = True
+                            break
+
+                    if not added:
+                        clusters = np.vstack( (clusters, (*pos, 1)) )
+
+            for cluster in clusters:
+                if cluster[3] > 1:
+                    clusteredTree.insertNode( cluster[:3] )
+
+        return clusteredTree
+    
 
 ## ---------------------------------------------------------------------------------------------------##
 
@@ -408,7 +458,8 @@ if __name__ == "__main__":
                 print("Results for test at:", the_pos)
                 if result is not None:
                     for i in result:
-                        print("    ", i.name, i.position)
+                        data = i['data']
+                        print("    ", data.name, data.position)
                 print()
             ##################################################################################
 
